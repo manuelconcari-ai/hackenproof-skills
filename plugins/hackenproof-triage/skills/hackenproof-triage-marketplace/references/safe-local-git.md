@@ -89,9 +89,12 @@ as a local verification failure. Every object ID below must have that exact widt
 
 The option value is constructed only after step 2 has accepted the hexadecimal form. Require
 exit 0, no diagnostic on stderr, and exactly one output line containing a full hexadecimal
-object ID that starts with the submitted prefix. Zero matches means no matching local object;
-two or more matches mean an ambiguous abbreviation. Never pick the first match or filter the
-matches by object type to make an abbreviation appear unique. A branch or tag carrying the same
+object ID that starts with the submitted prefix. Two or more matches mean an ambiguous
+abbreviation, which is a defect in the identifier. Zero matches establish only local absence:
+shallow, single-branch, partial, and simply outdated clones all lack objects that exist upstream,
+and no local command separates that from an invented identifier. Unless independent evidence
+establishes that the identifier is invalid, report local verification as unavailable. Never pick
+the first match or filter the matches by object type to make an abbreviation appear unique. A branch or tag carrying the same
 name does not participate in this lookup. Checking the prefix alone is insufficient: two objects
 can share it, and a same-named branch can hide that ambiguity from ordinary `rev-parse`.
 
@@ -101,8 +104,9 @@ can share it, and a same-named branch can hide that ambiguity from ordinary `rev
 [git, "-C", repo, "show-ref", "--verify", "--quiet", "--end-of-options", fullref]
 ```
 
-Exit 1 with no diagnostic means the exact ref is absent; any other failure or diagnostic means
-local verification is unavailable. For a name without `refs/`, check both `refs/tags/<name>` and
+Exit 1 with no diagnostic means the exact ref is absent from this clone, which is local absence
+and not evidence that the ref is wrong; any other failure or diagnostic also means local
+verification is unavailable. For a name without `refs/`, check both `refs/tags/<name>` and
 `refs/heads/<name>`. Require exactly one existing ref; if both exist, request the fully qualified
 name instead of silently choosing a namespace. Never retry an absent full ref in another namespace.
 
@@ -152,13 +156,17 @@ scope from `get_program_info`; a successful Git read is not scope evidence.
 
 Failures come in two kinds, and they do not lead to the same action:
 
-- **The identifier is the problem** — invalid shape, unknown object or ref, ambiguous, or not a
-  commit. Set `Need more info` and request an exact commit.
-- **The environment is the problem** — Git missing or older than 2.45, the configured path is not
-  a repository, an object is unreadable (`error: inflate: data stream error`, `unable to unpack …
-  header`), or a needed object is absent while lazy fetching is disabled. Record that local
-  version verification did not run and treat the report as if no local repository were configured.
-  Do not ask the reporter for a commit on those grounds.
+- **The identifier is the problem** — it fails the shape checks, an abbreviation matches two or
+  more objects, a short name exists as both a tag and a branch, or a resolved object is not a
+  commit. These are properties of the identifier, visible without assuming the clone is complete.
+  Set `Need more info` and request an exact commit.
+- **Local verification is unavailable** — Git missing or older than 2.45, the configured path is
+  not a repository, an object is unreadable (`error: inflate: data stream error`,
+  `unable to unpack … header`), or the object or ref is absent from this clone. Absence is not
+  evidence of invalidity. Record that local version verification did not run and treat the report
+  as if no local repository were configured. Do not ask the reporter for a commit on those grounds
+  unless independent evidence — program metadata, or an operator statement that this clone is
+  complete and current — establishes that the identifier is wrong.
 
 In both cases, do not run another command with that input, and never retry by dropping a
 safeguard.
@@ -177,12 +185,13 @@ commands leave fixture files unchanged and fetch no objects.
 | 4 | `abc1234..def5678` | Rejected at step 2 as a range; a comparison takes two separately resolved endpoints. |
 | 5 | `HEAD`, with `refs/tags/HEAD` present in the repository | Rejected at step 2 as a pseudo-ref, even though the ref resolves. |
 | 6 | An 8-character hex name that a branch also carries, with `core.warnAmbiguousRefs=false` | Object lookup ignores the branch: a unique matching object resolves; multiple matching objects are rejected, independently of warnings. |
-| 7 | `refs/tags/missing`, with a branch of that exact name | Rejected at step 3: `show-ref --verify` does not find the tag. |
-| 8 | A 40-character hex name absent from the repository | Rejected at step 3; `Need more info`, and no further command with that input. |
+| 7 | `refs/tags/missing`, with a branch of that exact name | The branch never stands in for the tag. The tag is absent from this clone, so report local verification as unavailable. |
+| 8 | A 40-character hex name absent from the repository | Local absence only: report verification unavailable, and run no further command with that input. |
 | 9 | `v1.2.3`, present as a tag | Resolve the exact `refs/tags/v1.2.3` ref, then peel its object ID; scope is checked separately. |
 | 10 | A commit whose loose object has been corrupted | Environment failure, not a report failure: record that verification did not run; do not ask the reporter for another commit. |
 | 11 | A partial clone missing the objects a read needs | With `GIT_NO_LAZY_FETCH=1` the read fails and writes nothing; treat it as an environment failure. |
 | 12 | Two objects share a 7-character prefix, and a branch with that name selects one | Rejected: `--disambiguate` returns both objects, including with ambiguity warnings disabled. |
 | 13 | Git 2.44 or older | Local validation unavailable before handling the identifier; do not rely on an ignored environment variable. |
-| 14 | A missing blob is supplied as an object ID in a partial clone | No fetch; enumeration reports no local match, and any guarded peel fails without fetching. |
+| 14 | A missing blob is supplied as an object ID in a partial clone | No fetch; enumeration reports no local match and any guarded peel fails without fetching. The outcome is unavailable verification, not a rejected identifier. |
 | 15 | A tag and a branch share the supplied short name | Request the fully qualified ref; do not choose a namespace automatically. |
+| 16 | A shallow, single-branch, or outdated clone that lacks a commit which exists upstream | Same as any other local absence: verification unavailable. In the local test `--disambiguate` returned nothing and `cat-file -e` failed for a valid upstream commit, with no promisor remote configured, so "is there a promisor?" is not the test either. |

@@ -89,9 +89,12 @@ as a local verification failure. Every object ID below must have that exact widt
 
 The option value is constructed only after step 2 has accepted the hexadecimal form. Require
 exit 0, no diagnostic on stderr, and exactly one output line containing a full hexadecimal
-object ID that starts with the submitted prefix. Zero matches means no matching local object;
-two or more matches mean an ambiguous abbreviation. Never pick the first match or filter the
-matches by object type to make an abbreviation appear unique. A branch or tag carrying the same
+object ID that starts with the submitted prefix. Two or more matches mean an ambiguous
+abbreviation, which is a defect in the identifier. Zero matches establish only local absence:
+shallow, single-branch, partial, and simply outdated clones all lack objects that exist upstream,
+and no local command separates that from an invented identifier. Unless independent evidence
+establishes that the identifier is invalid, report local verification as unavailable. Never pick
+the first match or filter the matches by object type to make an abbreviation appear unique. A branch or tag carrying the same
 name does not participate in this lookup. Checking the prefix alone is insufficient: two objects
 can share it, and a same-named branch can hide that ambiguity from ordinary `rev-parse`.
 
@@ -101,8 +104,9 @@ can share it, and a same-named branch can hide that ambiguity from ordinary `rev
 [git, "-C", repo, "show-ref", "--verify", "--quiet", "--end-of-options", fullref]
 ```
 
-Exit 1 with no diagnostic means the exact ref is absent; any other failure or diagnostic means
-local verification is unavailable. For a name without `refs/`, check both `refs/tags/<name>` and
+Exit 1 with no diagnostic means the exact ref is absent from this clone, which is local absence
+and not evidence that the ref is wrong; any other failure or diagnostic also means local
+verification is unavailable. For a name without `refs/`, check both `refs/tags/<name>` and
 `refs/heads/<name>`. Require exactly one existing ref; if both exist, request the fully qualified
 name instead of silently choosing a namespace. Never retry an absent full ref in another namespace.
 
@@ -164,12 +168,16 @@ pathspec:
 
 Failures come in two kinds, and the verdict text should say which one occurred:
 
-- **The endpoint is the problem** — invalid shape, unknown object or ref, ambiguous, or not a
-  commit. Return `NEEDS REVIEW` and ask the operator for an exact commit.
-- **The environment is the problem** — Git missing or older than 2.45, the configured path is not
-  a repository, an object is unreadable (`error: inflate: data stream error`, `unable to unpack …
-  header`), or a needed object is absent while lazy fetching is disabled. Return `NEEDS REVIEW`
-  stating that the local repository could not be read, which is not a defect of the fix.
+- **The endpoint is the problem** — it fails the shape checks, an abbreviation matches two or more
+  objects, a short name exists as both a tag and a branch, or a resolved object is not a commit.
+  These are properties of the endpoint, visible without assuming the clone is complete. Return
+  `NEEDS REVIEW` and ask the operator for an exact commit.
+- **Local verification is unavailable** — Git missing or older than 2.45, the configured path is
+  not a repository, an object is unreadable (`error: inflate: data stream error`,
+  `unable to unpack … header`), or the object or ref is absent from this clone. Absence is not
+  evidence of invalidity: shallow, single-branch, partial, and outdated clones all lack objects
+  that exist upstream. Return `NEEDS REVIEW` stating that the local repository could not be read,
+  which is not a defect of the fix and not a defect of the endpoint.
 
 In both cases, do not run another command with that input, and never retry by dropping a
 safeguard. If Git rejects a safeguard, stop and report the limitation.
@@ -186,11 +194,12 @@ unchanged and fetch no objects.
 | 2 | `v$(printf${IFS}W0)` | Rejected at step 2 for the character set; under a shell with double quotes it would resolve a different commit. |
 | 3 | `main..fix-branch` as one string | Split into two endpoints and each resolved, or `NEEDS REVIEW`; never passed unsplit. |
 | 4 | An 8-character hex name that a branch also carries, with `core.warnAmbiguousRefs=false` | Object lookup ignores the branch: a unique matching object resolves; multiple matching objects are rejected, independently of warnings. |
-| 5 | `refs/tags/missing`, with a branch of that exact name | Rejected at step 3: `show-ref --verify` does not find the tag. |
+| 5 | `refs/tags/missing`, with a branch of that exact name | The branch never stands in for the tag. The tag is absent from this clone, so report local verification as unavailable. |
 | 6 | A merge commit as the only fix endpoint | Parents inspected; explicit base and fix endpoints required before a verdict. |
-| 7 | A commit absent from the repository | Rejected at step 3; `NEEDS REVIEW`, with no further command using that input. |
+| 7 | A commit absent from the repository | Local absence only: `NEEDS REVIEW` stating the repository could not confirm it, with no further command using that input. |
 | 8 | A corrupted object, or a partial clone missing what the read needs | Environment failure: `NEEDS REVIEW` stating the repository could not be read, not a defect of the fix. |
 | 9 | Two objects share a 7-character prefix, and a branch with that name selects one | Rejected: `--disambiguate` returns both objects, including with ambiguity warnings disabled. |
 | 10 | Git 2.44 or older | Local validation unavailable before handling the identifier; do not rely on an ignored environment variable. |
-| 11 | A missing blob is supplied as an object ID in a partial clone | No fetch; enumeration reports no local match, and any guarded peel fails without fetching. |
+| 11 | A missing blob is supplied as an object ID in a partial clone | No fetch; enumeration reports no local match and any guarded peel fails without fetching. The outcome is unavailable verification, not a rejected endpoint. |
 | 12 | A tag and a branch share the supplied short name | Request the fully qualified ref; do not choose a namespace automatically. |
+| 13 | A shallow, single-branch, or outdated clone that lacks a commit which exists upstream | Same as any other local absence: verification unavailable. In the local test `--disambiguate` returned nothing and `cat-file -e` failed for a valid upstream commit, with no promisor remote configured. |
